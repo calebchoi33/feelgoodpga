@@ -8,6 +8,8 @@ Automated voice bot for QA testing hospital phone systems using LiveKit Agents.
 Twilio (SIP) → LiveKit Cloud → Deepgram (STT/TTS)
                     ↓
               Claude (LLM)
+                    ↓
+            Transcript Logs
 ```
 
 ## Quick Start
@@ -18,11 +20,11 @@ python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # Fill in your keys
 
-# Run agent
+# Run agent (Terminal 1)
 python agent.py dev
 
-# Dispatch calls (in another terminal)
-python dispatch.py -s 0  # Run scenario 0
+# Dispatch calls (Terminal 2)
+python dispatch.py -s 0
 ```
 
 ## Setup
@@ -59,20 +61,52 @@ python agent.py dev
 # Dispatch calls
 python dispatch.py -l              # List scenarios
 python dispatch.py -s 0            # Run scenario 0
+python dispatch.py -s 0 1 2        # Run multiple scenarios
 python dispatch.py                 # Run all scenarios
-python dispatch.py -s 0 1 -c 3     # Run scenarios 0,1 three times each
+python dispatch.py -s 0 -c 3       # Run scenario 0 three times
+```
+
+## Transcripts
+
+Two-way conversation transcripts are automatically saved to `transcripts/`:
+
+```
+transcripts/
+└── 20260206_141639_michael_thompson.txt
+```
+
+Example transcript:
+```
+Call Transcript: Michael Thompson
+Room: call-0-1770416197
+Started: 2026-02-06T14:16:39
+--------------------------------------------------
+[14:16:46] PATIENT:  Hi, I'm calling to schedule a new patient appointment...
+[14:16:48] HOSPITAL: This call may be recorded for quality and training purposes.
+[14:16:56] HOSPITAL: Am I speaking with Michael?
+[14:16:59] PATIENT:  Yes, this is Michael Thompson...
+[14:17:15] HOSPITAL: Can I have your date of birth?
+[14:17:16] PATIENT:  Yes, my date of birth is March 22, 1985.
 ```
 
 ## Scenarios
 
-11 test scenarios covering scheduling, rescheduling, cancellations, refills, and questions. See `scenarios.py`.
+11 test scenarios covering:
+- Scheduling new appointments
+- Rescheduling existing appointments
+- Cancellations
+- Prescription refills
+- General questions
+
+See `scenarios.py` for details.
 
 ## Files
 
 ```
-agent.py       - LiveKit voice agent
-dispatch.py    - CLI to dispatch calls
-scenarios.py   - Test scenarios
+agent.py       - LiveKit voice agent with transcript logging
+dispatch.py    - CLI to dispatch test calls
+scenarios.py   - Test scenario definitions
+transcripts/   - Saved conversation transcripts
 ```
 
 ## Resources

@@ -3,53 +3,61 @@
 Dispatch test calls to the hospital voice bot via LiveKit.
 
 Usage:
-    python dispatch.py --list              # List scenarios
-    python dispatch.py --scenario 0        # Run scenario 0
-    python dispatch.py                     # Run all scenarios
+    python dispatch.py -l              # List scenarios
+    python dispatch.py -s 0            # Run scenario 0
+    python dispatch.py -s 0 1 2        # Run scenarios 0, 1, 2
+    python dispatch.py                 # Run all scenarios
+    python dispatch.py -s 0 -c 3       # Run scenario 0 three times
 """
 
+import argparse
+import asyncio
+import json
 import os
 import sys
-import json
 import time
-import asyncio
-import argparse
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from livekit import api
+
 from scenarios import SCENARIOS
 
 load_dotenv()
 
+# =============================================================================
 # Configuration
+# =============================================================================
+
+AGENT_NAME = "hospital-patient-bot"
+DELAY_BETWEEN_CALLS = 15
+
+# LiveKit credentials (from .env)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL")
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY")
 LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET")
 SIP_TRUNK_ID = os.getenv("LIVEKIT_SIP_TRUNK_ID")
 HOSPITAL_NUMBER = os.getenv("HOSPITAL_PHONE_NUMBER", "+18054398008")
 
-DELAY_BETWEEN_CALLS = 15
+REQUIRED_CONFIG = ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LIVEKIT_SIP_TRUNK_ID"]
+
+# =============================================================================
+# Dispatch Functions
+# =============================================================================
 
 
 def check_config() -> list[str]:
     """Return list of missing required config variables."""
-    required = {
-        "LIVEKIT_URL": LIVEKIT_URL,
-        "LIVEKIT_API_KEY": LIVEKIT_API_KEY,
-        "LIVEKIT_API_SECRET": LIVEKIT_API_SECRET,
-        "LIVEKIT_SIP_TRUNK_ID": SIP_TRUNK_ID,
-    }
-    return [name for name, value in required.items() if not value]
+    return [name for name in REQUIRED_CONFIG if not os.getenv(name)]
 
 
 async def dispatch_call(scenario_index: int) -> bool:
-    """Dispatch a single call. Returns True on success."""
+    """Dispatch a single call to the hospital. Returns True on success."""
     scenario = SCENARIOS[scenario_index]
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"[{scenario_index}] {scenario.name}")
     print(f"Goal: {scenario.goal}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     lk = api.LiveKitAPI(
         url=LIVEKIT_URL,
@@ -67,9 +75,9 @@ async def dispatch_call(scenario_index: int) -> bool:
 
         print(f"Dispatching to {HOSPITAL_NUMBER}...")
 
-        response = await lk.agent_dispatch.create_dispatch(
+        await lk.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
-                agent_name="hospital-patient-bot",
+                agent_name=AGENT_NAME,
                 room=room_name,
                 metadata=metadata,
             )
@@ -86,7 +94,7 @@ async def dispatch_call(scenario_index: int) -> bool:
 
 
 async def run_scenarios(indices: list[int], count: int = 1):
-    """Run specified scenarios."""
+    """Run specified scenarios with optional repeat count."""
     total = len(indices) * count
     success = 0
 
@@ -102,13 +110,18 @@ async def run_scenarios(indices: list[int], count: int = 1):
                 print(f"\nWaiting {DELAY_BETWEEN_CALLS}s...")
                 await asyncio.sleep(DELAY_BETWEEN_CALLS)
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"Complete: {success}/{total} calls dispatched")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
+
+
+# =============================================================================
+# CLI
+# =============================================================================
 
 
 def list_scenarios():
-    """Print available scenarios."""
+    """Print available test scenarios."""
     print("Available scenarios:\n")
     for i, s in enumerate(SCENARIOS):
         print(f"  [{i}] {s.name}")
@@ -116,30 +129,34 @@ def list_scenarios():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Dispatch hospital voice bot calls")
-    parser.add_argument("-s", "--scenario", type=int, nargs="+", help="Scenario indices")
-    parser.add_argument("-c", "--count", type=int, default=1, help="Repeat count")
-    parser.add_argument("-l", "--list", action="store_true", help="List scenarios")
+    parser = argparse.ArgumentParser(
+        description="Dispatch hospital voice bot calls",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("-s", "--scenario", type=int, nargs="+", help="Scenario indices to run")
+    parser.add_argument("-c", "--count", type=int, default=1, help="Repeat count for each scenario")
+    parser.add_argument("-l", "--list", action="store_true", help="List available scenarios")
     args = parser.parse_args()
 
     if args.list:
         list_scenarios()
         return
 
-    # Check config
+    # Validate config
     missing = check_config()
     if missing:
         print(f"ERROR: Missing config: {', '.join(missing)}")
         print("Check your .env file")
         sys.exit(1)
 
-    # Determine scenarios
+    # Validate scenario indices
     indices = args.scenario if args.scenario else list(range(len(SCENARIOS)))
     for idx in indices:
         if idx < 0 or idx >= len(SCENARIOS):
-            print(f"ERROR: Invalid scenario {idx}")
+            print(f"ERROR: Invalid scenario index: {idx}")
             sys.exit(1)
 
+    # Run
     print("Hospital Voice Bot - Dispatcher")
     print(f"Target: {HOSPITAL_NUMBER}")
     print(f"Scenarios: {len(indices)} x {args.count} = {len(indices) * args.count} calls")
