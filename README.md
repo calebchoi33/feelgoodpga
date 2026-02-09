@@ -9,7 +9,9 @@ Twilio (SIP) → LiveKit Cloud → Deepgram (STT/TTS)
                     ↓
               Claude (LLM)
                     ↓
-            Transcript Logs
+         LiveKit Egress (Recording)
+                    ↓
+        Audio Files + Transcripts
 ```
 
 ## Quick Start
@@ -66,10 +68,19 @@ python dispatch.py                 # Run all scenarios
 python dispatch.py -s 0 -c 3       # Run scenario 0 three times
 ```
 
-## Transcripts
+## Output
 
-Two-way conversation transcripts are automatically saved to `transcripts/`:
+Each call generates two files:
 
+### Audio Recordings
+Call audio is recorded via LiveKit Egress and saved to `recordings/`:
+```
+recordings/
+└── 20260206_141639_michael_thompson.ogg
+```
+
+### Transcripts
+Two-way conversation transcripts are saved to `transcripts/`:
 ```
 transcripts/
 └── 20260206_141639_michael_thompson.txt
@@ -80,6 +91,7 @@ Example transcript:
 Call Transcript: Michael Thompson
 Room: call-0-1770416197
 Started: 2026-02-06T14:16:39
+Audio: 20260206_141639_michael_thompson.ogg
 --------------------------------------------------
 [14:16:46] PATIENT:  Hi, I'm calling to schedule a new patient appointment...
 [14:16:48] HOSPITAL: This call may be recorded for quality and training purposes.
@@ -87,6 +99,9 @@ Started: 2026-02-06T14:16:39
 [14:16:59] PATIENT:  Yes, this is Michael Thompson...
 [14:17:15] HOSPITAL: Can I have your date of birth?
 [14:17:16] PATIENT:  Yes, my date of birth is March 22, 1985.
+--------------------------------------------------
+Ended: 2026-02-06T14:19:30
+Entries: 24
 ```
 
 ## Scenarios
@@ -103,14 +118,16 @@ See `scenarios.py` for details.
 ## Files
 
 ```
-agent.py       - LiveKit voice agent with transcript logging
+agent.py       - LiveKit voice agent with recording & transcripts
 dispatch.py    - CLI to dispatch test calls
 scenarios.py   - Test scenario definitions
-transcripts/   - Saved conversation transcripts
+recordings/    - Audio recordings (OGG format)
+transcripts/   - Conversation transcripts
 ```
 
 ## Resources
 
 - [LiveKit Agents](https://docs.livekit.io/agents/)
+- [LiveKit Egress](https://docs.livekit.io/egress/)
 - [LiveKit Telephony](https://docs.livekit.io/agents/start/telephony/)
 - [Twilio SIP Setup](https://docs.livekit.io/telephony/start/providers/twilio/)

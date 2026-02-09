@@ -4,6 +4,7 @@ Hospital Voice Bot - LiveKit Agent
 
 Simulates patients calling hospital phone systems for QA testing.
 Uses LiveKit Agents with Deepgram STT/TTS and Claude LLM.
+Includes audio recording via LiveKit Egress.
 """
 
 # SSL fix for macOS (must be before other imports)
@@ -45,8 +46,12 @@ load_dotenv()
 # =============================================================================
 
 AGENT_NAME = "hospital-patient-bot"
-TRANSCRIPT_DIR = Path(__file__).parent / "transcripts"
-TRANSCRIPT_DIR.mkdir(exist_ok=True)
+
+# Output directories
+RECORDINGS_DIR = Path(__file__).parent / "recordings"
+TRANSCRIPTS_DIR = Path(__file__).parent / "transcripts"
+RECORDINGS_DIR.mkdir(exist_ok=True)
+TRANSCRIPTS_DIR.mkdir(exist_ok=True)
 
 # Model configuration
 STT_MODEL = "nova-2"
@@ -81,43 +86,98 @@ Guidelines:
 Begin by stating why you're calling."""
 
 # =============================================================================
-# Transcript Logger
+# Call Recorder (LiveKit Egress)
 # =============================================================================
 
 
-class TranscriptLogger:
-    """Logs two-way conversation transcripts to file."""
+class CallRecorder:
+    """Records call audio and transcripts using LiveKit Egress."""
 
     def __init__(self, scenario_name: str, room_name: str):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = scenario_name.replace(" ", "_").lower()
-        self.filepath = TRANSCRIPT_DIR / f"{timestamp}_{safe_name}.txt"
+        self.base_name = f"{timestamp}_{safe_name}"
+        self.room_name = room_name
+        self.scenario_name = scenario_name
 
-        self._write_header(scenario_name, room_name)
+        # File paths
+        self.audio_path = RECORDINGS_DIR / f"{self.base_name}.ogg"
+        self.transcript_path = TRANSCRIPTS_DIR / f"{self.base_name}.txt"
 
-    def _write_header(self, scenario_name: str, room_name: str):
-        """Write transcript file header."""
-        with open(self.filepath, "w") as f:
-            f.write(f"Call Transcript: {scenario_name}\n")
-            f.write(f"Room: {room_name}\n")
+        # State
+        self.egress_id: str | None = None
+        self.transcript_entries: list[str] = []
+
+        # Write transcript header
+        self._init_transcript()
+
+    def _init_transcript(self):
+        """Initialize transcript file with header."""
+        with open(self.transcript_path, "w") as f:
+            f.write(f"Call Transcript: {self.scenario_name}\n")
+            f.write(f"Room: {self.room_name}\n")
             f.write(f"Started: {datetime.now().isoformat()}\n")
+            f.write(f"Audio: {self.audio_path.name}\n")
             f.write("-" * 50 + "\n")
 
-    def _log(self, speaker: str, text: str):
-        """Write a line to the transcript."""
+    def _append_transcript(self, speaker: str, text: str):
+        """Append a line to the transcript."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         line = f"[{timestamp}] {speaker}: {text}"
-        with open(self.filepath, "a") as f:
+        self.transcript_entries.append(line)
+        with open(self.transcript_path, "a") as f:
             f.write(line + "\n")
         logger.info(f"{speaker}: {text}")
 
     def log_hospital(self, text: str):
         """Log hospital system speech."""
-        self._log("HOSPITAL", text)
+        self._append_transcript("HOSPITAL", text)
 
     def log_patient(self, text: str):
         """Log patient bot speech."""
-        self._log("PATIENT ", text)
+        self._append_transcript("PATIENT ", text)
+
+    async def start_recording(self, lk_api: api.LiveKitAPI):
+        """Start LiveKit Egress audio recording."""
+        try:
+            # Request room composite egress (audio only)
+            egress_request = api.RoomCompositeEgressRequest(
+                room_name=self.room_name,
+                audio_only=True,
+                file_outputs=[
+                    api.EncodedFileOutput(
+                        file_type=api.EncodedFileType.OGG,
+                        filepath=str(self.audio_path),
+                    )
+                ],
+            )
+
+            response = await lk_api.egress.start_room_composite_egress(egress_request)
+            self.egress_id = response.egress_id
+            logger.info(f"Recording started: {self.audio_path.name} (egress: {self.egress_id})")
+
+        except Exception as e:
+            logger.warning(f"Could not start recording: {e}")
+            logger.info("Continuing without audio recording")
+
+    async def stop_recording(self, lk_api: api.LiveKitAPI):
+        """Stop the egress recording."""
+        if self.egress_id:
+            try:
+                await lk_api.egress.stop_egress(api.StopEgressRequest(egress_id=self.egress_id))
+                logger.info(f"Recording stopped: {self.audio_path.name}")
+            except Exception as e:
+                logger.warning(f"Could not stop recording: {e}")
+
+    def finalize(self):
+        """Finalize transcript with footer."""
+        with open(self.transcript_path, "a") as f:
+            f.write("-" * 50 + "\n")
+            f.write(f"Ended: {datetime.now().isoformat()}\n")
+            f.write(f"Entries: {len(self.transcript_entries)}\n")
+        logger.info(f"Transcript saved: {self.transcript_path}")
+        if self.audio_path.exists():
+            logger.info(f"Audio saved: {self.audio_path}")
 
 
 # =============================================================================
@@ -128,11 +188,11 @@ class TranscriptLogger:
 class PatientAgent(Agent):
     """Voice agent simulating a patient calling a hospital."""
 
-    def __init__(self, scenario: PatientScenario, transcript: TranscriptLogger):
+    def __init__(self, scenario: PatientScenario, recorder: CallRecorder):
         instructions = self._build_instructions(scenario)
         super().__init__(instructions=instructions)
         self.scenario = scenario
-        self.transcript = transcript
+        self.recorder = recorder
 
     def _build_instructions(self, scenario: PatientScenario) -> str:
         """Build the agent instructions from scenario."""
@@ -161,7 +221,7 @@ class PatientAgent(Agent):
         if buffer:
             full_text = "".join(buffer).strip()
             if full_text:
-                self.transcript.log_patient(full_text)
+                self.recorder.log_patient(full_text)
 
     def tts_node(
         self, text: AsyncIterable[str], model_settings: ModelSettings
@@ -205,11 +265,11 @@ async def entrypoint(ctx: RunContext):
     scenario = SCENARIOS[scenario_index]
     logger.info(f"Scenario: {scenario.name} | Goal: {scenario.goal}")
 
-    # Initialize transcript and agent
-    transcript = TranscriptLogger(scenario.name, ctx.room.name)
-    agent = PatientAgent(scenario, transcript)
+    # Initialize recorder (handles both audio and transcripts)
+    recorder = CallRecorder(scenario.name, ctx.room.name)
 
-    # Create session with STT/LLM/TTS pipeline
+    # Create agent and session
+    agent = PatientAgent(scenario, recorder)
     session = AgentSession(
         stt=deepgram.STT(model=STT_MODEL),
         llm=anthropic_llm.LLM(model=LLM_MODEL),
@@ -221,7 +281,7 @@ async def entrypoint(ctx: RunContext):
     @session.on("user_input_transcribed")
     def on_hospital_speech(event):
         if event.is_final:
-            transcript.log_hospital(event.transcript)
+            recorder.log_hospital(event.transcript)
 
     # Start session
     await session.start(room=ctx.room, agent=agent)
@@ -240,8 +300,13 @@ async def entrypoint(ctx: RunContext):
                 )
             )
             logger.info("Connected")
+
+            # Start audio recording after call connects
+            await recorder.start_recording(ctx.api)
+
         except api.TwirpError as e:
             logger.error(f"Call failed: {e.message}")
+            recorder.finalize()
             await ctx.shutdown()
             return
 
